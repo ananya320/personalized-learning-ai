@@ -13,3 +13,6 @@ numpy==2.1.2
 scikit-learn==1.5.2
 pypdf==5.0.1
 python-multipart==0.0.12
+json-repair==0.30.3
+
+json-repair==0.30.3

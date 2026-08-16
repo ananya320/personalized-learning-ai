@@ -1,13 +1,14 @@
 """
 Generates lesson + leveled multiple-choice questions for any topic, using
 Groq (free tier, Llama models). Also generates quiz feedback, powers the
-AI Coach chat, and — new — generates content GROUNDED in a student's
-uploaded document via retrieval (RAG).
+AI Coach chat, and generates content GROUNDED in a student's uploaded
+document via retrieval (RAG).
 """
 
 import os
 import json
 from groq import Groq
+from json_repair import repair_json
 from .models import Skill, ContentItem, ItemType
 from .rag import retrieve_relevant_chunks
 
@@ -116,7 +117,13 @@ def _parse_json_response(raw_text: str) -> dict:
         raw_text = raw_text.strip("`")
         if raw_text.startswith("json"):
             raw_text = raw_text[4:]
-    return json.loads(raw_text)
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        # Groq occasionally emits near-valid JSON (unescaped quotes, trailing
+        # commas). repair_json fixes common issues before we give up entirely.
+        repaired = repair_json(raw_text)
+        return json.loads(repaired)
 
 
 async def _store_generated_content(store, skill_id: str, subject_name: str, subject: str, data: dict):
@@ -156,10 +163,11 @@ async def generate_topic_content(store, topic: str) -> str:
     """General-knowledge generation — no source document."""
     skill_id = _slugify(topic)
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[{"role": "user", "content": GENERATION_PROMPT.format(topic=topic)}],
         temperature=0.7,
         max_tokens=4000,
+        response_format={"type": "json_object"},
     )
     data = _parse_json_response(response.choices[0].message.content)
     await _store_generated_content(store, skill_id, topic.strip().title(), skill_id, data)
@@ -174,10 +182,11 @@ async def generate_topic_from_document(store, topic: str, document) -> str:
 
     skill_id = _slugify(f"{topic}-{document.id[:6]}")
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[{"role": "user", "content": GROUNDED_GENERATION_PROMPT.format(topic=topic, context=context)}],
         temperature=0.5,
         max_tokens=4000,
+        response_format={"type": "json_object"},
     )
     data = _parse_json_response(response.choices[0].message.content)
     display_name = f"{topic.strip().title()} (from {document.filename})"
@@ -192,7 +201,7 @@ async def generate_quiz_feedback(topic_name: str, level: str, score: int, total:
         missed_list = "(none — perfect score)"
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[{
             "role": "user",
             "content": FEEDBACK_PROMPT.format(
@@ -210,7 +219,7 @@ async def chat_with_coach(summary: str, messages: list[dict]) -> str:
     chat_messages.extend(messages)
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=chat_messages,
         temperature=0.7,
         max_tokens=400,
